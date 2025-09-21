@@ -1,0 +1,2 @@
+Exercies from Chapter 11 - Packages and Modules of Learn Go course at boot.dev.
+Course completion certificate can be found [here](https://www.boot.dev/certificates/b4a7220c-bffa-4135-b56c-f1ee88d04e90).
