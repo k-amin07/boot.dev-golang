@@ -2,11 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/k-amin07/boot.dev-golang/3.Build-a-Pokedex-in-Go/internal/pokecache"
 )
 
 type config struct {
@@ -17,7 +21,7 @@ type config struct {
 type cliCommand struct {
 	name        string
 	description string
-	callback    func(cfg *config) error
+	callback    func(cfg *config) ([]byte, error)
 }
 
 type PokeAPIResponse struct {
@@ -40,38 +44,35 @@ func cleanInput(text string) []string {
 	return returnValue
 }
 
-func commandExit(cfg *config) error {
+func commandExit(cfg *config) ([]byte, error) {
 	fmt.Println("Closing the Pokedex... Goodbye!")
 	os.Exit(0)
-	return nil
+	return nil, nil
 }
 
-func commandHelp(cfg *config) error {
+func commandHelp(cfg *config) ([]byte, error) {
 	fmt.Printf("Welcome to the Pokedex!\nUsage:\n\nhelp: Displays a help message\nexit: Exit the Pokedex\n")
-	return nil
+	return nil, nil
 }
 
-func commandMap(cfg *config) error {
-	var locations PokeAPIResponse
+func commandMap(cfg *config) ([]byte, error) {
 	resp, err := http.Get(cfg.Next)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	decoder := json.NewDecoder(resp.Body)
-	if err := decoder.Decode(&locations); err != nil {
-		return err
+	var buf bytes.Buffer
+	_, err = buf.ReadFrom(resp.Body)
+	if err != nil {
+		return nil, err
 	}
-
-	for _, location := range locations.Results {
-		fmt.Println(location.Name)
-	}
-
-	return nil
+	return buf.Bytes(), nil
 }
 
 func main() {
+
+	cache := pokecache.NewCache(5 * time.Second)
 
 	commandMap := map[string]cliCommand{
 		"exit": {
@@ -99,6 +100,7 @@ func main() {
 	offset := -20
 
 	userInput := bufio.NewScanner(os.Stdin)
+	var locations PokeAPIResponse
 	for {
 		fmt.Print("Pokedex > ")
 		userInput.Scan()
@@ -117,10 +119,38 @@ func main() {
 				continue
 			}
 			offset -= 20
+		default:
+			elem.callback(nil)
+			continue
 		}
-		elem.callback(&config{
-			Previous: fmt.Sprintf("https://pokeapi.co/api/v2/location-area/?offset=%d&limit=20", offset),
-			Next:     fmt.Sprintf("https://pokeapi.co/api/v2/location-area/?offset=%d&limit=20", offset),
-		})
+		pokeApiUrl := fmt.Sprintf("https://pokeapi.co/api/v2/location-area/?offset=%d&limit=20", offset)
+		if cacheRes, ok := cache.Get(pokeApiUrl); !ok {
+			resp, err := elem.callback(&config{
+				Previous: pokeApiUrl,
+				Next:     pokeApiUrl,
+			})
+			if err != nil {
+				continue
+			}
+			cache.Add(pokeApiUrl, resp)
+			err = json.Unmarshal(resp, &locations)
+			if err != nil {
+				continue
+			}
+
+			for _, location := range locations.Results {
+				fmt.Println(location.Name)
+			}
+		} else {
+			err := json.Unmarshal(cacheRes, &locations)
+			if err != nil {
+				continue
+			}
+
+			for _, location := range locations.Results {
+				fmt.Println(location.Name)
+			}
+		}
+
 	}
 }
